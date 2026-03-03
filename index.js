@@ -29,12 +29,53 @@ app.post("/create-payment-intent", async (req, res) => {
 
   try {
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: amount || 1000, // Defaulting if not strictly provided
+      amount: amount || 1000,
       currency: "usd",
     });
 
     res.send({ clientSecret: paymentIntent.client_secret });
   } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
+
+// Endpoint for app 3 (Embedded Subscriptions)
+app.post("/create-subscription-intent", async (req, res) => {
+  const { priceId, email, name } = req.body;
+
+  const user = req.user;
+
+  try {
+    // 1. Create a Stripe customer
+    // const customer = await stripe.customers.create({
+    //   email: email || undefined,
+    //   name: name || undefined,
+    // });
+
+    // 2. Create an incomplete subscription.
+    // Newer Stripe SDK returns the secret via latest_invoice.confirmation_secret
+    const subscription = await stripe.subscriptions.create({
+      customer: user.stripe_customer_id,
+      items: [{ price: priceId }],
+      payment_behavior: "default_incomplete",
+      payment_settings: { save_default_payment_method: "on_subscription" },
+      expand: ["latest_invoice.confirmation_secret.client_secret"],
+    });
+
+    const confirmationSecret = subscription.latest_invoice?.confirmation_secret;
+    if (!confirmationSecret?.client_secret) {
+      return res
+        .status(500)
+        .send({ error: "Could not retrieve client secret from Stripe." });
+    }
+
+    res.send({
+      subscriptionId: subscription.id,
+      clientSecret: confirmationSecret.client_secret,
+      customerId: user.stripe_customer_id,
+    });
+  } catch (error) {
+    console.error("Subscription Error:", error);
     res.status(500).send({ error: error.message });
   }
 });
