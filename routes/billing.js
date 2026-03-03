@@ -146,4 +146,38 @@ router.post("/subscribe-trial", requireAuth, async (req, res) => {
   }
 });
 
+// Fetch the last 5 invoices for the authenticated user directly from Stripe
+// We do NOT store invoices in the DB — always query Stripe live.
+router.get("/invoices", requireAuth, async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (!user.stripe_customer_id) {
+      return res.json([]);
+    }
+
+    const invoiceList = await stripe.invoices.list({
+      customer: user.stripe_customer_id,
+      limit: 5,
+    });
+
+    const invoices = invoiceList.data.map(inv => ({
+      id: inv.id,
+      number: inv.number,
+      status: inv.status,
+      amount_due: inv.amount_due,
+      amount_paid: inv.amount_paid,
+      currency: inv.currency,
+      created: inv.created,
+      hosted_invoice_url: inv.hosted_invoice_url,
+      invoice_pdf: inv.invoice_pdf,
+    }));
+
+    res.json(invoices);
+  } catch (err) {
+    console.error("Invoices fetch error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
