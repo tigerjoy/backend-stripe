@@ -77,6 +77,9 @@ async function syncSubscription(subscription) {
       subscription_status: subscription.status,
       subscription_plan: planName,
       current_period_end: new Date(subscription.current_period_end * 1000),
+      trial_end: subscription.trial_end
+        ? new Date(subscription.trial_end * 1000)
+        : null,
     },
     { where: { stripe_customer_id: subscription.customer } },
   );
@@ -88,6 +91,7 @@ async function handleCanceled(subscription) {
       subscription_status: "canceled",
       subscription_plan: null,
       current_period_end: null,
+      trial_end: null,
     },
     { where: { stripe_customer_id: subscription.customer } },
   );

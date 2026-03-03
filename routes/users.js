@@ -73,6 +73,7 @@ router.get("/me/billing", requireAuth, async (req, res) => {
       renewsAt: user.current_period_end
         ? new Date(user.current_period_end).toISOString()
         : null,
+      trialEnd: user.trial_end ? new Date(user.trial_end).toISOString() : null,
       isActive:
         user.subscription_status === "active" ||
         user.subscription_status === "trialing",
@@ -111,6 +112,10 @@ router.get("/me/billing", requireAuth, async (req, res) => {
       ? new Date(item.current_period_end * 1000).toISOString()
       : null;
 
+    const trialEnd = sub.trial_end
+      ? new Date(sub.trial_end * 1000).toISOString()
+      : null;
+
     const isActive = sub.status === "active" || sub.status === "trialing";
 
     // 4️⃣ Background DB sync (best-effort)
@@ -119,6 +124,7 @@ router.get("/me/billing", requireAuth, async (req, res) => {
         subscription_status: sub.status,
         subscription_plan: planName,
         current_period_end: renewsAt ? new Date(renewsAt) : null,
+        trial_end: trialEnd ? new Date(trialEnd) : null,
       })
       .catch(err => console.error("Billing DB sync failed:", err));
 
@@ -127,6 +133,7 @@ router.get("/me/billing", requireAuth, async (req, res) => {
       status: sub.status,
       plan: planName,
       renewsAt,
+      trialEnd,
       isActive,
       amount: price?.unit_amount ?? null,
       currency: price?.currency ?? null,

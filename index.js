@@ -8,7 +8,7 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { sequelize } = require("./lib/db");
 
 // Sync Database
-sequelize.sync().then(() => {
+sequelize.sync({ alter: true }).then(() => {
   console.log("SQLite Database synced");
 });
 
