@@ -58,23 +58,165 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// Read-Only Billing Info
+/**
+ * GET /me/billing
+ * Read-only billing info for current user
+ */
 router.get("/me/billing", requireAuth, async (req, res) => {
   try {
     const user = req.user;
-    res.json({
-      status: user.subscription_status, // active | past_due | canceled | none
-      plan: user.subscription_plan, // "Pro Plan" | null
-      renewsAt: user.current_period_end, // Date | null
+
+    // 1️⃣ Default response from DB (fast path)
+    let responseData = {
+      status: user.subscription_status || "none",
+      plan: user.subscription_plan || null,
+      renewsAt: user.current_period_end
+        ? new Date(user.current_period_end).toISOString()
+        : null,
       isActive:
         user.subscription_status === "active" ||
         user.subscription_status === "trialing",
+      amount: null,
+      currency: null,
+      interval: null,
+      quantity: null,
+    };
+
+    // If user never had Stripe
+    if (!user.stripe_customer_id) {
+      return res.json(responseData);
+    }
+
+    // 2️⃣ Fetch subscription (NO over-expansion)
+    const subscriptions = await stripe.subscriptions.list({
+      customer: user.stripe_customer_id,
+      status: "all",
+      limit: 1,
+      expand: ["data.items.data.price"], // ✅ exactly 4 levels
     });
+
+    const sub = subscriptions.data?.[0];
+    if (!sub) {
+      return res.json(responseData);
+    }
+
+    const item = sub.items?.data?.[0];
+    const price = item?.price;
+
+    // 3️⃣ Extract values safely
+    const planName =
+      price?.nickname || user.subscription_plan || "Premium Plan";
+
+    const renewsAt = item.current_period_end
+      ? new Date(item.current_period_end * 1000).toISOString()
+      : null;
+
+    const isActive = sub.status === "active" || sub.status === "trialing";
+
+    // 4️⃣ Background DB sync (best-effort)
+    user
+      .update({
+        subscription_status: sub.status,
+        subscription_plan: planName,
+        current_period_end: renewsAt ? new Date(renewsAt) : null,
+      })
+      .catch(err => console.error("Billing DB sync failed:", err));
+
+    // 5️⃣ Build final response (from Stripe)
+    responseData = {
+      status: sub.status,
+      plan: planName,
+      renewsAt,
+      isActive,
+      amount: price?.unit_amount ?? null,
+      currency: price?.currency ?? null,
+      interval: price?.recurring?.interval ?? null,
+      quantity: item?.quantity ?? null,
+    };
+
+    return res.json(responseData);
   } catch (err) {
     console.error("Billing fetch error:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
+
+// Read-Only Billing Info
+// router.get("/me/billing", requireAuth, async (req, res) => {
+//   try {
+//     const user = req.user;
+
+//     // Default response values from local DB
+//     let responseData = {
+//       status: user.subscription_status || "none",
+//       plan: user.subscription_plan || null,
+//       renewsAt: user.current_period_end || null,
+//       isActive:
+//         user.subscription_status === "active" ||
+//         user.subscription_status === "trialing",
+//     };
+
+//     // Fetch freshest data from Stripe directly (ensures accuracy even without webhooks)
+//     if (user.stripe_customer_id) {
+//       // Stripe allows max 3 levels of expansion
+//       const subscriptions = await stripe.subscriptions.list({
+//         customer: user.stripe_customer_id,
+//         status: "all",
+//         expand: ["data.items.data.price"],
+//         limit: 1,
+//       });
+
+//       if (subscriptions.data.length > 0) {
+//         const sub = subscriptions.data[0];
+
+//         // Fetch product name separately (can't go 4 levels deep in expand)
+//         let productName = user.subscription_plan || "Premium Plan";
+//         const productId = sub.items?.data?.[0]?.price?.product;
+//         if (productId && typeof productId === "string") {
+//           try {
+//             const product = await stripe.products.retrieve(productId);
+//             productName = product.name || productName;
+//           } catch (_) {
+//             /* non-critical, use DB fallback */
+//           }
+//         }
+
+//         // Derive renewsAt directly from Stripe's Unix timestamp
+//         console.log(
+//           "[DEBUG] sub.current_period_end:",
+//           sub.current_period_end,
+//           "| sub.status:",
+//           sub.status,
+//         );
+//         const renewsAt = sub.current_period_end
+//           ? new Date(sub.current_period_end * 1000).toISOString()
+//           : null;
+
+//         // Persist to DB in the background (best-effort sync)
+//         user
+//           .update({
+//             subscription_status: sub.status,
+//             subscription_plan: productName,
+//             current_period_end: renewsAt ? new Date(renewsAt) : null,
+//           })
+//           .catch(err => console.error("DB sync error:", err));
+
+//         // Build response directly from live Stripe data
+//         responseData = {
+//           status: sub.status,
+//           plan: productName,
+//           renewsAt,
+//           isActive: sub.status === "active" || sub.status === "trialing",
+//         };
+//       }
+//     }
+
+//     res.json(responseData);
+//   } catch (err) {
+//     console.error("Billing fetch error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
 
 module.exports = {
   router,
