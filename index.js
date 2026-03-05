@@ -10,7 +10,10 @@ const { sequelize } = require("./lib/db");
 // Sync Database
 sequelize.sync({ alter: true }).then(() => {
   console.log("SQLite Database synced");
-});
+}).catch((err) => {
+  console.error("Database sync failed:", err);
+  process.exit(1); // explicit, intentional exit
+});;
 
 const app = express();
 app.use(cors());
@@ -84,7 +87,7 @@ app.post("/create-subscription-intent", async (req, res) => {
 app.post("/create-checkout-session", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
+      // payment_method_types: ["card"],
       mode: "payment",
       line_items: [
         {
@@ -107,6 +110,9 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-app.listen(5000, () => {
-  console.log("Server is running on http://localhost:5000");
+app.listen(4000, () => {
+  console.log("Server is running on http://localhost:4000");
+}).on("error", (err) => {
+  console.error("Server failed to start:", err);
+  process.exit(1);
 });
