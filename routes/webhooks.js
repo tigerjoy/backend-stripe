@@ -26,6 +26,8 @@ router.post(
       switch (event.type) {
         case "customer.subscription.created":
         case "customer.subscription.updated":
+        case "customer.subscription.paused":
+        case "customer.subscription.resumed":
           await syncSubscription(event.data.object);
           break;
 
@@ -56,9 +58,16 @@ router.post(
 // ─── Handlers ────────────────────────────────────────────────
 
 async function syncSubscription(subscription) {
-  // Get the product name so we know which plan this is
-  const priceId = subscription.items.data[0]?.price?.id;
+  // Get the product name and amount so we know which plan this is
+  const item = subscription.items.data[0];
+  const priceId = item?.price?.id;
+  
   let planName = null;
+  let amountCents = null;
+
+  if (item) {
+    amountCents = item.price.unit_amount;
+  }
 
   if (priceId) {
     try {
@@ -74,9 +83,11 @@ async function syncSubscription(subscription) {
 
   await User.update(
     {
+      stripe_subscription_id: subscription.id,
       subscription_status: subscription.status,
       subscription_plan: planName,
-      current_period_end: new Date(subscription.current_period_end * 1000),
+      subscription_amount: amountCents,
+      current_period_end: subscription.current_period_end ? new Date(subscription.current_period_end * 1000) : null,
       trial_end: subscription.trial_end
         ? new Date(subscription.trial_end * 1000)
         : null,
@@ -88,8 +99,10 @@ async function syncSubscription(subscription) {
 async function handleCanceled(subscription) {
   await User.update(
     {
+      stripe_subscription_id: null,
       subscription_status: "canceled",
       subscription_plan: null,
+      subscription_amount: null,
       current_period_end: null,
       trial_end: null,
     },
@@ -100,20 +113,25 @@ async function handleCanceled(subscription) {
 async function handlePaymentSucceeded(invoice) {
   if (!invoice.subscription) return; // skip one-off invoices
 
-  // It's technically active once it succeeds, though standard handling relies more on `customer.subscription.updated`.
-  // This acts as a fallback or explicit state flip.
+  // Fetch the canonical subscription to get the absolutely correct status 
+  // (could be active, trialing, incomplete to active, etc.)
+  const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+  
   await User.update(
-    { subscription_status: "active" },
-    { where: { stripe_customer_id: invoice.customer } },
+    { subscription_status: subscription.status },
+    { where: { stripe_subscription_id: invoice.subscription } },
   );
 }
 
 async function handlePaymentFailed(invoice) {
   if (!invoice.subscription) return;
 
+  // Retrieve the subscription to know if it became past_due, incomplete, unpaid, etc.
+  const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+
   await User.update(
-    { subscription_status: "past_due" },
-    { where: { stripe_customer_id: invoice.customer } },
+    { subscription_status: subscription.status },
+    { where: { stripe_subscription_id: invoice.subscription } },
   );
 }
 

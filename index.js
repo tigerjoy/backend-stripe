@@ -25,6 +25,7 @@ app.use(bodyParser.json());
 
 app.use("/api/users", require("./routes/users").router);
 app.use("/api/billing", require("./routes/billing"));
+app.use("/api/admin", require("./routes/admin"));
 
 // Endpoint for app 2 (In-app payments)
 app.post("/create-payment-intent", async (req, res) => {

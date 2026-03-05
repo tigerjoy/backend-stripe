@@ -180,4 +180,49 @@ router.get("/invoices", requireAuth, async (req, res) => {
   }
 });
 
+// App 5: Get client secret for an incomplete subscription's payment intent
+// Required to render the Stripe Payment Element directly on the Dashboard.
+router.get("/incomplete-intent", requireAuth, async (req, res) => {
+  try {
+    const user = req.user;
+
+    // Fast-fail if there's no subscription assigned
+    if (!user.stripe_subscription_id) {
+      return res.status(400).json({ error: "No subscription assigned yet." });
+    }
+
+    if (user.subscription_status === "active") {
+      return res.status(400).json({ error: "Subscription is already active." });
+    }
+
+    // Retrieve the subscription from Stripe, expanding both secret types.
+    // Newer Stripe API versions use confirmation_secret instead of payment_intent
+    // for subscriptions created with price_data.
+    const subscription = await stripe.subscriptions.retrieve(
+      user.stripe_subscription_id,
+      { expand: ["latest_invoice.payment_intent", "latest_invoice.confirmation_secret"] }
+    );
+
+    const invoice = subscription.latest_invoice;
+    let clientSecret = null;
+
+    if (invoice?.payment_intent?.client_secret) {
+      // Classic flow: payment_intent is present and expanded
+      clientSecret = invoice.payment_intent.client_secret;
+    } else if (invoice?.confirmation_secret?.client_secret) {
+      // Newer flow: confirmation_secret is an object with a client_secret
+      clientSecret = invoice.confirmation_secret.client_secret;
+    }
+
+    if (!clientSecret) {
+      return res.status(400).json({ error: "No pending payment intent found." });
+    }
+
+    res.json({ clientSecret, amount: user.subscription_amount });
+  } catch (err) {
+    console.error("Incomplete intent fetch error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
